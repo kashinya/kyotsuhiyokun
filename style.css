@@ -143,6 +143,11 @@ ol.steps li + li { margin-top: 6px; }
 /* Expense entry */
 .amount-input { font-size: 28px !important; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; min-height: 60px !important; }
 .entry-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.own-rows:empty { display: none; }
+.own-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: center; }
+.own-row + .own-row { margin-top: 10px; }
+.own-row input { text-align: right; font-variant-numeric: tabular-nums; }
+.own-row .linkish { font-size: 20px; padding: 6px 8px; }
 
 /* Expense lists */
 .list { list-style: none; margin: 0; padding: 0; }

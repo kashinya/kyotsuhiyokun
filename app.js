@@ -1,6 +1,6 @@
 // 共通費用くん. Shared data lives in Firebase Realtime Database under groups/{group name}.
 // The query (?g=group&n=name) decides which group and who; the hash (#history #settlements #settle) decides the screen.
-import { computeSettlement, isUnsettled } from './settlement.js';
+import { computeSettlement, isUnsettled, ownPortions } from './settlement.js';
 
 // ---- Constants -------------------------------------------------------------
 const SDK = 'https://www.gstatic.com/firebasejs/12.19.0/';
@@ -137,6 +137,7 @@ function expenseList(raw) {
       memberId: e.memberId ?? null,
       enteredBy: e.enteredBy ?? null,
       amount: Number(e.amount) || 0,
+      own: e.own && typeof e.own === 'object' ? e.own : {},
       memo: typeof e.memo === 'string' ? e.memo : '',
       createdAt: Number(e.createdAt) || 0,
       deletedAt: e.deletedAt ?? null,
@@ -157,6 +158,7 @@ function normalizeGroup(v) {
     .map(([id, s]) => ({
       id,
       total: Number(s.total) || 0,
+      ownTotal: Number(s.ownTotal) || 0,
       share: Number(s.share) || 0,
       memberCount: Number(s.memberCount) || 0,
       createdAt: Number(s.createdAt) || 0,
@@ -547,8 +549,28 @@ function lastSettleLine(g) {
     : '送金なし';
   return `<a class="linkish" href="#settlements" data-nav="settlements">前回の精算（${fmtDate(s.createdAt)}）：${t}</a>`;
 }
+// "合計 1,200（個別 280）／ 一人 307": the own portions are not part of the equal split.
+function totalsHtml(r) {
+  const own = r.ownTotal ? `（個別 ${fmtNum(r.ownTotal)}）` : '';
+  return `合計 <b>${fmtNum(r.total)}</b>${own} ／ 一人 <b>${fmtNum(r.share)}</b>`;
+}
+// Own portions of one expense as shown in lists, in member order: "うち kt 280".
+function ownText(e) {
+  const ids = new Set(state.group.members.map((m) => m.id));
+  const parts = state.group.members
+    .filter((m) => m.id in ownPortions(e, ids))
+    .map((m) => `${esc(m.name)} ${fmtNum(e.own[m.id])}`);
+  return parts.length ? `うち ${parts.join('、')}` : '';
+}
+// Member table for the settlement preview and history. The 個別 column appears only when used.
+function statsTable(rows) {
+  const withOwn = rows.some((p) => p.own);
+  const head = `<th>名前</th><th>出した</th>${withOwn ? '<th>個別</th>' : ''}<th>差額</th>`;
+  const body = rows.map((p) => `<tr><td>${esc(p.name)}</td><td>${fmtNum(p.paid)}</td>${withOwn ? `<td>${p.own ? fmtNum(p.own) : ''}</td>` : ''}<td class="${diffClass(p.balance)}">${fmtDiff(p.balance)}</td></tr>`).join('');
+  return `<table class="stats"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
 function expenseRow(e, canDelete) {
-  const sub = [e.memo ? esc(e.memo) : '', e.enteredBy && e.enteredBy !== e.memberId ? `入力：${esc(memberName(e.enteredBy))}` : '']
+  const sub = [e.memo ? esc(e.memo) : '', ownText(e), e.enteredBy && e.enteredBy !== e.memberId ? `入力：${esc(memberName(e.enteredBy))}` : '']
     .filter(Boolean).join('　');
   let act = '';
   if (e.deletedAt != null) act = '<span class="tag">取消済</span>';
@@ -576,6 +598,8 @@ function viewMain() {
         <label class="field"><span>出した人</span><select id="m-payer"></select></label>
         <label class="field"><span>メモ（任意）</span><input type="text" id="m-memo" maxlength="${MAX_MEMO}" placeholder="夕食など"></label>
       </div>
+      <div class="own-rows" id="m-own"></div>
+      <button class="linkish" type="button" data-act="own-add">＋ 個別の分（その人だけに付ける）</button>
       <p class="err" id="m-err"></p>
       <button class="btn primary big" type="submit">出した</button>
     </form>`}
@@ -611,7 +635,7 @@ function updateMain() {
       <div class="diff ${diffClass(p.balance)}">${fmtDiff(p.balance)}</div>
     </div>`;
   }).join(''));
-  put('m-totals', `合計 <b>${fmtNum(r.total)}</b> ／ 一人 <b>${fmtNum(r.share)}</b>`);
+  put('m-totals', totalsHtml(r));
   put('m-last', lastSettleLine(g));
   const recent = g.expenses.filter((e) => e.settlementId == null).slice(-RECENT_COUNT).reverse();
   put('m-recent', recent.length ? recent.map((e) => expenseRow(e, !closed)).join('') : '<li class="muted">まだありません。</li>');
@@ -619,7 +643,7 @@ function updateMain() {
   if (settleBtn) settleBtn.disabled = r.count === 0;
   const sel = document.getElementById('m-payer');
   if (sel) {
-    const opts = g.members.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}${m.id === meId ? '（自分）' : ''}</option>`).join('');
+    const opts = memberOptions();
     if (sel.__html !== opts) {
       const keep = sel.__html ? sel.value : meId;
       sel.innerHTML = opts;
@@ -627,9 +651,52 @@ function updateMain() {
       sel.value = g.memberById.has(keep) ? keep : meId;
     }
   }
+  for (const s of document.querySelectorAll('#m-own select')) {
+    const opts = memberOptions();
+    if (s.__html === opts) continue;
+    const keep = s.value;
+    s.innerHTML = opts;
+    s.__html = opts;
+    s.value = g.memberById.has(keep) ? keep : meId;
+  }
   put('m-hint', !closed && isIosSafariBrowser() && !hintClosed()
     ? `<div class="notice row" style="margin-top:14px"><span style="flex:1">共有 → <b>ホーム画面に追加</b> で、このグループが 1 タップで開きます。</span><button class="linkish" type="button" data-act="hint-close" aria-label="閉じる">閉じる</button></div>`
     : '');
+}
+function memberOptions() {
+  return state.group.members.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}${m.id === state.me.id ? '（自分）' : ''}</option>`).join('');
+}
+// One "個別の分" row: who it is charged to and how much. Defaults to me.
+function addOwnRow() {
+  const box = document.getElementById('m-own');
+  const opts = memberOptions();
+  const row = document.createElement('div');
+  row.className = 'own-row';
+  row.innerHTML = `<select aria-label="個別の分を付ける人">${opts}</select>
+    <input type="text" inputmode="numeric" placeholder="個別の金額" aria-label="個別の金額">
+    <button class="linkish" type="button" data-act="own-del" aria-label="この行を消す">×</button>`;
+  const sel = row.querySelector('select');
+  sel.__html = opts;
+  sel.value = state.me.id;
+  box.appendChild(row);
+  row.querySelector('input').focus();
+}
+// Reads the own rows. Empty rows are skipped; the same member twice is added up.
+function readOwnRows(amount) {
+  const own = {};
+  let sum = 0;
+  for (const row of document.querySelectorAll('#m-own .own-row')) {
+    const raw = row.querySelector('input').value;
+    if (!String(raw).trim()) continue;
+    const id = row.querySelector('select').value;
+    if (!state.group.memberById.has(id)) return { error: '個別の分を付ける人を選んでください。' };
+    const a = parseAmount(raw);
+    if (a.error) return { error: `個別の分：${a.error}` };
+    own[id] = (own[id] || 0) + a.value;
+    sum += a.value;
+  }
+  if (sum > amount) return { error: '個別の分の合計が金額を超えています。' };
+  return { value: own };
 }
 function addExpense() {
   const amountEl = document.getElementById('m-amount');
@@ -640,19 +707,24 @@ function addExpense() {
   let err = a.error || '';
   if (!err && memo.length > MAX_MEMO) err = `メモは${MAX_MEMO}文字以内にしてください。`;
   if (!err && !state.group.memberById.has(payerEl.value)) err = '出した人を選んでください。';
+  const own = err ? {} : readOwnRows(a.value);
+  if (!err && own.error) err = own.error;
   put('m-err', esc(err));
   if (err) return;
-  // push() applies locally at once (onValue redraws the tiles) and is sent when connected.
-  fb.push(fb.child(groupRef(), 'expenses'), {
+  const expense = {
     memberId: payerEl.value,
     enteredBy: state.me.id,
     amount: a.value,
     memo,
     createdAt: Date.now(),
-  }).catch((e) => alert(`保存できませんでした。（${e?.message || e}）`));
+  };
+  if (Object.keys(own.value).length) expense.own = own.value;
+  // push() applies locally at once (onValue redraws the tiles) and is sent when connected.
+  fb.push(fb.child(groupRef(), 'expenses'), expense).catch((e) => alert(`保存できませんでした。（${e?.message || e}）`));
   amountEl.value = '';
   memoEl.value = '';
   payerEl.value = state.me.id;
+  document.getElementById('m-own').replaceChildren();
 }
 async function deleteExpense(id) {
   const e = state.group.expenses.find((x) => x.id === id);
@@ -700,15 +772,12 @@ function viewSettle() {
     if (!r.count) {
       return put('s-body', '<p class="notice">精算する費用がありません。</p><button class="btn" type="button" data-act="main">戻る</button>');
     }
-    const rows = g.members.map((m) => {
-      const p = r.members[m.id];
-      return `<tr><td>${esc(m.name)}</td><td>${fmtNum(p.paid)}</td><td class="${diffClass(p.balance)}">${fmtDiff(p.balance)}</td></tr>`;
-    }).join('');
+    const rows = g.members.map((m) => ({ name: m.name, ...r.members[m.id] }));
     put('s-body', `
       ${state.closeAfterSettle ? '<p class="notice">未精算の費用があるので、先に精算してからグループを終了します。</p>' : ''}
       <div class="card">
-        <p class="totals" style="margin:0 0 8px">合計 <b>${fmtNum(r.total)}</b> ／ 一人 <b>${fmtNum(r.share)}</b>（${r.memberCount}人）</p>
-        <table class="stats"><thead><tr><th>名前</th><th>出した</th><th>差額</th></tr></thead><tbody>${rows}</tbody></table>
+        <p class="totals" style="margin:0 0 8px">${totalsHtml(r)}（${r.memberCount}人）</p>
+        ${statsTable(rows)}
       </div>
       <div class="card">
         <h2>送金</h2>
@@ -743,6 +812,7 @@ async function confirmSettle() {
       const expenses = { ...cur.expenses };
       for (const id of r.expenseIds) expenses[id] = { ...expenses[id], settlementId: sid };
       const record = { total: r.total, share: r.share, memberCount: r.memberCount, createdAt: now, members: r.members, transfers: r.transfers };
+      if (r.ownTotal) record.ownTotal = r.ownTotal;
       return { ...cur, expenses, settlements: { ...(cur.settlements || {}), [sid]: record } };
     });
     if (!res.committed) {
@@ -837,18 +907,16 @@ function viewSettlements() {
     const g = state.group;
     const cards = [...g.settlements].reverse().map((s) => {
       const rows = Object.entries(s.members)
-        .map(([id, p]) => ({ id, paid: Number(p?.paid) || 0, balance: Number(p?.balance) || 0, order: g.members.findIndex((m) => m.id === id) }))
-        .sort((a, b) => a.order - b.order)
-        .map((p) => `<tr><td>${esc(memberName(p.id))}</td><td>${fmtNum(p.paid)}</td><td class="${diffClass(p.balance)}">${fmtDiff(p.balance)}</td></tr>`)
-        .join('');
+        .map(([id, p]) => ({ name: memberName(id), paid: Number(p?.paid) || 0, own: Number(p?.own) || 0, balance: Number(p?.balance) || 0, order: g.members.findIndex((m) => m.id === id) }))
+        .sort((a, b) => a.order - b.order);
       return `<details class="card">
         <summary>
           <h2>精算 #${s.no}（${fmtDate(s.createdAt)}）</h2>
-          <p class="totals" style="text-align:left">合計 <b>${fmtNum(s.total)}</b> ／ 一人 <b>${fmtNum(s.share)}</b>（${s.memberCount}人）</p>
+          <p class="totals" style="text-align:left">${totalsHtml(s)}（${s.memberCount}人）</p>
           ${transferList(s.transfers)}
           <span class="more">内訳を見る</span>
         </summary>
-        <table class="stats" style="margin-top:8px"><thead><tr><th>名前</th><th>出した</th><th>差額</th></tr></thead><tbody>${rows}</tbody></table>
+        <div style="margin-top:8px">${statsTable(rows)}</div>
       </details>`;
     });
     put('t-body', cards.length ? cards.join('') : '<p class="muted">まだ精算していません。</p>');
@@ -884,6 +952,8 @@ $app.addEventListener('click', (ev) => {
     if (m) chooseMember(m);
   } else if (act === 'cancel-pick') goMain();
   else if (act === 'del') deleteExpense(t.dataset.id);
+  else if (act === 'own-add') addOwnRow();
+  else if (act === 'own-del') t.closest('.own-row')?.remove();
   else if (act === 'settle') {
     state.closeAfterSettle = false;
     navigate('settle');

@@ -12,7 +12,10 @@
         "expenses": {
           "$expense": {
             "amount": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 9999999" },
-            "memo": { ".validate": "newData.isString() && newData.val().length <= 50" }
+            "memo": { ".validate": "newData.isString() && newData.val().length <= 50" },
+            "own": {
+              "$member": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 9999999" }
+            }
           }
         }
       }

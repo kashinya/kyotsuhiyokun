@@ -42,6 +42,40 @@ test('SPEC 4.4 example: rounding (A 1,000, B 0, C 0), leftover 1 is dropped', ()
   ]);
 });
 
+test('SPEC 4.4 example: own portion (usui pays 1,200, kt own 280)', () => {
+  const r = computeSettlement([ex('usui', 1200, { own: { kt: 280 } })], ['kt', 'usui', 'M']);
+  assert.equal(r.total, 1200);
+  assert.equal(r.ownTotal, 280);
+  assert.equal(r.share, 307);
+  assert.deepEqual(r.members, {
+    kt: { paid: 0, own: 280, balance: -587 },
+    usui: { paid: 1200, balance: 893 },
+    M: { paid: 0, balance: -307 },
+  });
+  assert.deepEqual(r.transfers, [
+    { from: 'kt', to: 'usui', amount: 587 },
+    { from: 'M', to: 'usui', amount: 306 },
+  ]);
+});
+
+test('own portion equal to the whole expense: plain advance for one member', () => {
+  const r = computeSettlement([ex('usui', 280, { own: { kt: 280 } })], ['kt', 'usui']);
+  assert.equal(r.share, 0);
+  assert.deepEqual(r.transfers, [{ from: 'kt', to: 'usui', amount: 280 }]);
+});
+
+test('own portions are ignored when invalid or larger than the expense', () => {
+  const r1 = computeSettlement([ex('A', 100, { own: { B: 60, C: 50 } })], ['A', 'B', 'C']);
+  assert.equal(r1.ownTotal, 0);
+  assert.equal(r1.share, 33);
+  const r2 = computeSettlement([ex('A', 100, { own: { X: 50, B: 0, C: 1.5 } })], ['A', 'B', 'C']);
+  assert.equal(r2.ownTotal, 0);
+  const r3 = computeSettlement([ex('A', 100, { own: { B: 40, X: 50 } })], ['A', 'B']);
+  assert.equal(r3.ownTotal, 40);
+  assert.equal(r3.share, 30);
+  assert.deepEqual(r3.members.B, { paid: 0, own: 40, balance: -70 });
+});
+
 test('deleted and already settled expenses are excluded', () => {
   const r = computeSettlement(
     [
