@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f5fbf" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111418" media="(prefers-color-scheme: dark)">
+<meta name="description" content="旅行中の共通費用を積み上げて、均等割りで精算する割り勘アプリ">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="共通費用くん">
+<title>共通費用くん</title>
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button id="btn-home" class="topbar-home" type="button" aria-label="メイン画面へ">共通費用くん</button>
+  <div id="topbar-info" class="topbar-info"></div>
+</header>
+<main id="app" class="app">
+  <p class="loading">読み込み中…</p>
+</main>
+<noscript>JavaScript を有効にしてください。</noscript>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "rules": {
+    "groups": {
+      "$group": {
+        ".read": true,
+        ".write": "!data.exists() || newData.exists()",
+        "members": {
+          "$member": {
+            "name": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 20" }
+          }
+        },
+        "expenses": {
+          "$expense": {
+            "amount": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 9999999" },
+            "memo": { ".validate": "newData.isString() && newData.val().length <= 50" }
+          }
+        }
+      }
+    }
+  }
+}
